@@ -140,3 +140,7 @@ Notes:
 - **Linux arm64:** the `ubuntu-26.04-arm` runner is free for public repositories. Private repositories need a plan that includes arm64 Linux runners.
 - **macOS signing:** without signing secrets, builds are ad-hoc signed. To produce a signed, notarized `.dmg`, add the `APPLE_*` secrets listed at the top of `release.yml`.
 - **Windows signing:** builds are unsigned unless you add a code-signing certificate, so SmartScreen shows "unknown publisher" until the app builds reputation.
+
+## License
+
+Copyright (c) 2026 Comfuzio. All rights reserved. The source is published for viewing only; see [LICENSE](LICENSE). Official release builds may be downloaded and used. Bundled third-party components such as yt-dlp keep their own licenses.

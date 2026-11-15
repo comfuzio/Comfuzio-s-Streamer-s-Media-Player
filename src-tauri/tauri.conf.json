@@ -42,6 +42,9 @@
     ],
     "externalBin": [
       "binaries/yt-dlp"
-    ]
+    ],
+    "copyright": "Copyright (c) 2026 Comfuzio. All rights reserved.",
+    "publisher": "Comfuzio",
+    "licenseFile": "../LICENSE"
   }
 }

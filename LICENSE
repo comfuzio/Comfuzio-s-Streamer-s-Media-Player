@@ -1,0 +1,23 @@
+Copyright (c) 2026 Comfuzio. All rights reserved.
+
+This software and its source code ("the Software") are the proprietary
+property of Comfuzio. The source code is published for viewing only.
+
+No license is granted to copy, modify, merge, publish, distribute,
+sublicense, or sell copies of the Software, in whole or in part, or to
+create derivative works from it, without prior written permission from
+the copyright holder.
+
+Official release builds published by the copyright holder may be
+downloaded, installed and used for personal and streaming purposes.
+
+Third-party components included in or used by the Software (including
+yt-dlp and the open-source libraries listed in package-lock.json and
+src-tauri/Cargo.lock) remain under their own licenses, and nothing in
+this notice restricts the rights those licenses grant.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.

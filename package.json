@@ -2,6 +2,9 @@
   "name": "comfuzio-streamer-media-player",
   "private": true,
   "version": "0.1.0",
+  "description": "Desktop music player and chat song-request bot for live streamers",
+  "license": "UNLICENSED",
+  "author": "Comfuzio",
   "type": "module",
   "engines": {
     "node": ">=22"
