@@ -1,0 +1,136 @@
+# Builds installers for every supported target and attaches them to a draft
+# GitHub Release. Trigger: push a tag `vX.Y.Z` (see `npm run version:set`), or
+# run manually from the Actions tab.
+#
+# Targets (and nothing else, by design):
+#   Windows  x86_64-pc-windows-msvc, aarch64-pc-windows-msvc  -> NSIS .exe
+#   macOS    aarch64-apple-darwin                              -> .app / .dmg
+#   Linux    x86_64-unknown-linux-gnu (baseline + x86-64-v3), aarch64-unknown-linux-gnu -> .AppImage
+#            Built on Ubuntu 26.04, so the AppImages need glibc 2.43+ (Ubuntu 26.04,
+#            Fedora 44, current Arch/openSUSE Tumbleweed and newer).
+#
+# Optional signing secrets (builds still succeed without them):
+#   macOS:   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
+#            APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID
+#            Without them the app is ad-hoc signed and users must allow it in
+#            System Settings > Privacy & Security on first launch.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: Windows arm64
+            # Cross-compiled on x64: the runner image ships the MSVC ARM64
+            # toolchain and LLVM (clang is needed by `ring` for arm64).
+            os: windows-latest
+            target: aarch64-pc-windows-msvc
+          - name: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: Linux x64 AppImage
+            os: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+          - name: Linux x64 AppImage (x86-64-v3)
+            # Same triple compiled for x86-64-v3 (AVX2/BMI2/FMA: Intel Haswell 2013+,
+            # AMD Excavator/Zen+), matching Ubuntu's amd64v3 variant. Shipped alongside
+            # the baseline build under its own file name.
+            os: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+            variant: x86-64-v3
+            rustflags: -C target-cpu=x86-64-v3
+            cflags: -march=x86-64-v3
+            asset_pattern: "[name]_[version]_x86-64-v3[ext]"
+          - name: Linux arm64 AppImage
+            # AppImages must be built natively for their architecture.
+            os: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/version.mjs --check "${{ github.ref_name }}"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}${{ matrix.variant && format('-{0}', matrix.variant) || '' }}
+
+      - name: Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential file libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev libasound2-dev patchelf xdg-utils
+
+      - run: npm ci
+
+      - name: Fetch yt-dlp sidecar
+        run: node scripts/fetch-sidecars.mjs --target ${{ matrix.target }}
+
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only set for the x86-64-v3 variant. With an explicit --target, RUSTFLAGS
+          # apply to the app only, not to build scripts that run on the host.
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          CFLAGS_x86_64_unknown_linux_gnu: ${{ matrix.cflags }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v__VERSION__-build.{0}', github.run_number) }}
+          releaseName: Comfuzio Streamer's Media Player v__VERSION__
+          releaseBody: |
+            Downloads:
+            - **Windows**: `*_x64-setup.exe` (Intel/AMD) or `*_arm64-setup.exe` (ARM, e.g. Snapdragon)
+            - **macOS**: `*_aarch64.dmg` (Apple Silicon, macOS 13+)
+            - **Linux** (glibc 2.43+, e.g. Ubuntu 26.04 / Fedora 44 / Arch): `chmod +x` the AppImage, then run it
+              - `*_amd64.AppImage`: any 64-bit Intel/AMD CPU
+              - `*_x86-64-v3.AppImage`: faster build for CPUs with AVX2 (Intel Haswell 2013+, AMD Zen+); crashes on older CPUs
+              - `*_aarch64.AppImage`: 64-bit ARM
+          releaseDraft: true
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          releaseAssetNamePattern: ${{ matrix.asset_pattern }}
+          args: --target ${{ matrix.target }}
+
+      # Fails the job (the release stays a draft) if the v3 flags didn't take effect.
+      # BMI2 variable shifts are emitted all over the program when compiling for v3,
+      # while a baseline build only has AVX2 in runtime-dispatched paths (memchr etc.),
+      # so they are a reliable marker.
+      - name: Verify x86-64-v3 code generation
+        if: matrix.variant == 'x86-64-v3'
+        run: |
+          bin=src-tauri/target/${{ matrix.target }}/release/comfuzio-player
+          bmi2=$(objdump -d --no-show-raw-insn "$bin" | grep -cE '\s(shlx|shrx|sarx)\s' || true)
+          echo "BMI2 shlx/shrx/sarx instructions: $bmi2"
+          test "$bmi2" -gt 500

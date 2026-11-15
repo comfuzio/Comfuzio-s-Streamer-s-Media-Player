@@ -1,0 +1,127 @@
+/* OBS Browser Source overlay. Transparent page; everything is driven by CSS
+   variables set from the saved overlay config. */
+
+:root {
+  --accent: #9b6bff;
+  --text: #ffffff;
+  --bg: #14121fb3;
+  --font: Inter, system-ui, sans-serif;
+  --scale: 1;
+  --width: 520px;
+  --radius: 18px;
+  --art: 96px;
+}
+
+* { box-sizing: border-box; margin: 0; }
+html, body { background: transparent; overflow: hidden; }
+body { font-family: var(--font); color: var(--text); -webkit-font-smoothing: antialiased; }
+body.preview {
+  background-color: #1d1d24;
+  background-image: linear-gradient(45deg, #26262f 25%, transparent 25%), linear-gradient(-45deg, #26262f 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #26262f 75%), linear-gradient(-45deg, transparent 75%, #26262f 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+
+.overlay {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  transform-origin: top left;
+  transform: scale(var(--scale));
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+.overlay.hidden { opacity: 0; }
+.overlay.animate.hidden { transform: scale(var(--scale)) translateY(-12px); }
+
+.card {
+  width: var(--width);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.art-wrap { flex: none; }
+.disc { width: var(--art); height: var(--art); border-radius: calc(var(--radius) * 0.6); overflow: hidden; position: relative; }
+.art { width: 100%; height: 100%; object-fit: cover; display: block; }
+.no-art .art-wrap { display: none; }
+
+.meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.eyebrow { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.playing .status-dot { animation: pulse 1.6s ease-in-out infinite; }
+.title-wrap { overflow: hidden; white-space: nowrap; mask-image: linear-gradient(90deg, #000 85%, transparent); }
+.title-wrap:not(.overflowing) { mask-image: none; }
+.title { display: inline-block; font-size: 20px; font-weight: 800; line-height: 1.25; }
+.title-wrap.overflowing .title { animation: marquee var(--marquee-duration, 12s) linear infinite; padding-right: 48px; }
+.artist { font-size: 15px; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.requester { font-size: 12px; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.requester:empty, .no-requester .requester { display: none; }
+
+.progress { margin-top: 6px; }
+.no-progress .progress { display: none; }
+.bar { height: 5px; border-radius: 99px; background: color-mix(in srgb, var(--text) 18%, transparent); overflow: hidden; }
+.fill { height: 100%; width: 0; border-radius: inherit; background: var(--accent); }
+.times { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.7; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.up-next { font-size: 12px; opacity: 0.75; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-next:empty, .no-up-next .up-next { display: none; }
+
+/* Track change */
+.animate.swap .card { animation: swap-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+/* ---------------------------------------------------------------- Minimal */
+[data-theme="minimal"] .card { background: transparent; padding: 0; gap: 12px; }
+[data-theme="minimal"] { --art: 64px; }
+[data-theme="minimal"] .title { font-size: 18px; text-shadow: 0 1px 6px #000a; }
+[data-theme="minimal"] .artist, [data-theme="minimal"] .requester, [data-theme="minimal"] .times { text-shadow: 0 1px 4px #000a; }
+[data-theme="minimal"] .eyebrow { display: none; }
+
+/* ---------------------------------------------------------------- Neon */
+[data-theme="neon"] .card {
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 12px var(--accent), inset 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+[data-theme="neon"] .title { text-shadow: 0 0 6px var(--accent), 0 0 18px var(--accent); }
+[data-theme="neon"] .disc { box-shadow: 0 0 14px var(--accent); }
+[data-theme="neon"] .fill { box-shadow: 0 0 10px var(--accent); }
+[data-theme="neon"] .eyebrow { text-shadow: 0 0 8px var(--accent); }
+
+/* ---------------------------------------------------------------- Glass */
+[data-theme="glass"] .card {
+  background: var(--bg);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  box-shadow: 0 10px 40px #0006;
+}
+[data-theme="glass"] .disc { box-shadow: 0 6px 18px #0008; }
+
+/* ---------------------------------------------------------------- Vinyl */
+[data-theme="vinyl"] { --art: 112px; }
+[data-theme="vinyl"] .card { background: var(--bg); box-shadow: 0 10px 40px #0007; }
+[data-theme="vinyl"] .disc {
+  border-radius: 50%;
+  padding: calc(var(--art) * 0.2);
+  background: radial-gradient(circle, #222 0 30%, #0b0b0b 31%, #1a1a1a 45%, #0b0b0b 46%, #1c1c1c 60%, #0b0b0b 61%, #191919 75%, #050505 100%);
+  box-shadow: 0 4px 16px #000a, inset 0 0 0 2px #ffffff10;
+}
+[data-theme="vinyl"] .disc::after {
+  content: ""; position: absolute; inset: 47%; border-radius: 50%; background: #0b0b0b; box-shadow: 0 0 0 2px var(--accent);
+}
+[data-theme="vinyl"] .art { border-radius: 50%; }
+[data-theme="vinyl"].playing .disc { animation: spin 3.6s linear infinite; }
+[data-theme="vinyl"].paused .disc { animation: spin 3.6s linear infinite paused; }
+[data-theme="vinyl"].no-art .art-wrap { display: block; }
+[data-theme="vinyl"].no-art .art { visibility: hidden; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+@keyframes marquee { 0%, 15% { transform: translateX(0); } 85%, 100% { transform: translateX(calc(-1 * var(--marquee-distance, 0px))); } }
+@keyframes swap-in { from { opacity: 0; transform: translateX(-24px); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay, .overlay * { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,105 @@
+import { useEffect, useState } from "react";
+import { Icon, type IconName } from "./components/Icon";
+import { StoreProvider, useStore } from "./lib/store";
+import { BlocklistView } from "./views/BlocklistView";
+import { ChatView } from "./views/ChatView";
+import { OverlayView } from "./views/OverlayView";
+import { PlayerView } from "./views/PlayerView";
+import { SettingsView } from "./views/SettingsView";
+
+type ViewId = "player" | "overlay" | "chat" | "blocklist" | "settings";
+
+const NAV: { id: ViewId; label: string; icon: IconName }[] = [
+  { id: "player", label: "Player & queue", icon: "music" },
+  { id: "overlay", label: "Overlay", icon: "layers" },
+  { id: "chat", label: "Chat bot", icon: "chat" },
+  { id: "blocklist", label: "Blocklist", icon: "ban" },
+  { id: "settings", label: "Settings", icon: "gear" },
+];
+
+const VIEW_KEY = "comfuzio.view";
+
+function readView(): ViewId {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    if (v && NAV.some((n) => n.id === v)) return v as ViewId;
+  } catch {
+    // storage unavailable: fall back to the default view
+  }
+  return "player";
+}
+
+function Notices() {
+  const { notices, dismiss } = useStore();
+  return (
+    <aside className="notices" aria-live="polite">
+      {notices.map((n) => (
+        <button key={n.id} className={`notice notice-${n.level}`} onClick={() => dismiss(n.id)}>{n.message}</button>
+      ))}
+    </aside>
+  );
+}
+
+function SidebarNowPlaying() {
+  const { player, queue } = useStore();
+  const item = player?.current;
+  return (
+    <div className="side-np">
+      <span className={`dot dot-${player?.status ?? "stopped"}`} />
+      <span className="side-np-text">
+        <span className="side-np-title">{item ? item.track.title : player?.status === "idle" ? "Waiting for requests" : "Stopped"}</span>
+        <span className="muted small">{queue.items.length} in queue</span>
+      </span>
+    </div>
+  );
+}
+
+function Shell() {
+  const { settings } = useStore();
+  const [view, setView] = useState<ViewId>(readView);
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // ignore
+    }
+  }, [view]);
+
+  return (
+    <div className="shell">
+      <nav className="sidebar">
+        <div className="brand">
+          <img src="/app-icon.svg" alt="" width={30} height={30} />
+          <span>Comfuzio<small>Streamer's Media Player</small></span>
+        </div>
+        {NAV.map((n) => (
+          <button key={n.id} className={`nav-item${view === n.id ? " active" : ""}`} onClick={() => setView(n.id)}>
+            <Icon name={n.icon} /> {n.label}
+          </button>
+        ))}
+        <div className="spacer" />
+        <SidebarNowPlaying />
+      </nav>
+      <main className="content">
+        {!settings ? <p className="empty">Loading…</p> : (
+          <>
+            {view === "player" && <PlayerView />}
+            {view === "overlay" && <OverlayView />}
+            {view === "chat" && <ChatView />}
+            {view === "blocklist" && <BlocklistView />}
+            {view === "settings" && <SettingsView />}
+          </>
+        )}
+      </main>
+      <Notices />
+    </div>
+  );
+}
+
+export function App() {
+  return (
+    <StoreProvider>
+      <Shell />
+    </StoreProvider>
+  );
+}

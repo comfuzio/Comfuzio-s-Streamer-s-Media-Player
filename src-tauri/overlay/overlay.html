@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Now Playing</title>
+    <link rel="stylesheet" href="/overlay/overlay.css" />
+  </head>
+  <body>
+    <div id="overlay" class="overlay hidden" data-theme="glass">
+      <div class="card">
+        <div class="art-wrap">
+          <div class="disc"><img class="art" alt="" referrerpolicy="no-referrer" /></div>
+        </div>
+        <div class="meta">
+          <div class="eyebrow"><span class="status-dot"></span><span class="status-text">Now playing</span></div>
+          <div class="title-wrap"><div class="title"></div></div>
+          <div class="artist"></div>
+          <div class="requester"></div>
+          <div class="progress">
+            <div class="bar"><div class="fill"></div></div>
+            <div class="times"><span class="elapsed">0:00</span><span class="total">0:00</span></div>
+          </div>
+          <div class="up-next"></div>
+        </div>
+      </div>
+    </div>
+    <script src="/overlay/overlay.js"></script>
+  </body>
+</html>

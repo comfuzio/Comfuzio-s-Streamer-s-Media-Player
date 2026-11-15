@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Comfuzio Streamers Media Player",
+  "mainBinaryName": "comfuzio-player",
+  "version": "0.1.0",
+  "identifier": "com.comfuzio.streamerplayer",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Comfuzio Streamer's Media Player",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 600,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*; frame-src http://127.0.0.1:*"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "category": "Music",
+    "shortDescription": "Music player and chat song-request bot for live streamers",
+    "longDescription": "Plays YouTube and Spotify requests from Twitch and YouTube chat through an isolated audio session that OBS can capture on its own, with a live browser-source overlay.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/yt-dlp"
+    ]
+  }
+}
