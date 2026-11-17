@@ -61,7 +61,7 @@ See [Building & releasing](#building--releasing) for release builds.
 
 ### Tray mode (low memory while streaming)
 
-Closing the window keeps the app running in the system tray. Music, the chat bot and the overlay keep working, and the dashboard's webview is destroyed rather than hidden. Measured on Windows, memory drops from about 200 MB with the window open to about 9 MB in the tray. Click the tray icon or launch the app again to reopen the dashboard; a second launch never starts a second copy. The tray menu also has Play / Pause, Skip and Quit. Both behaviors can be changed in **Settings → App**, along with "start in the tray".
+Closing the window keeps the app running in the system tray. Music, the chat bot and the overlay keep working, and the dashboard's webview is destroyed rather than hidden. Measured on Windows, memory drops from about 200 MB with the window open to about 9 MB in the tray. Click the tray icon or launch the app again to reopen the dashboard; a second launch never starts a second copy. The tray menu also has Play / Pause, Skip and Quit. Both behaviors can be changed in **Settings → App**, along with "start in the tray" and **"start automatically when I sign in"**. That option opens the app straight into the tray at login (about 5 MB, no dashboard). It uses a quoted entry in `HKCU\…\Run` on Windows, a LaunchAgent on macOS, and `~/.config/autostart` on Linux, where it points at the AppImage file itself.
 
 ### Local music library
 

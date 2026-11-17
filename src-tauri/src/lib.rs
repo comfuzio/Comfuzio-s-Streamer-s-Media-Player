@@ -1,6 +1,7 @@
 //! Comfuzio Streamer's Media Player — backend core.
 
 mod audio;
+mod autostart;
 mod chat;
 mod commands;
 mod error;
@@ -29,7 +30,13 @@ pub fn run() {
         )
         .init();
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec![autostart::AUTOSTART_ARG]),
+    ));
+    let app = builder
         // Must be the first plugin: a second launch just focuses the running app.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| tray::show_dashboard(app)))
         .plugin(tauri_plugin_opener::init())
@@ -39,11 +46,17 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = tauri::async_runtime::block_on(state::AppState::initialize(&handle))?;
-            let start_in_tray = state.settings.get().start_in_tray;
+            let settings = state.settings.get();
+            // Launched by the OS at sign-in: stay in the tray instead of popping a window.
+            let start_in_tray = settings.start_in_tray || autostart::launched_by_autostart();
             let events = state.bus.subscribe();
+            let bus = state.bus.clone();
+            let autostart_events = bus.subscribe();
             app.manage(state);
             tray::build(&handle)?;
             tauri::async_runtime::spawn(tray::tooltip_loop(handle.clone(), events));
+            tray::apply_autostart(&handle, settings.launch_at_startup, &bus);
+            tauri::async_runtime::spawn(tray::autostart_loop(handle.clone(), bus, autostart_events));
             if !start_in_tray {
                 tray::show_dashboard(&handle);
             }

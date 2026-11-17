@@ -127,6 +127,7 @@ export interface Settings {
   closeToTray: boolean;
   startInTray: boolean;
   autoCheckUpdates: boolean;
+  launchAtStartup: boolean;
   library: { folders: string[]; matchRequests: boolean };
   autoDj: { enabled: boolean; playlistId: number | null; shuffle: boolean };
 }

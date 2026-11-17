@@ -13,7 +13,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, WebviewWindowBuilder};
 use tokio::sync::broadcast;
 
-use crate::events::AppEvent;
+use crate::events::{AppEvent, EventBus, NoticeLevel};
 use crate::model::PlayerStatus;
 use crate::player::PlaybackController;
 use crate::state::AppState;
@@ -113,6 +113,25 @@ pub async fn tooltip_loop(app: AppHandle, mut rx: broadcast::Receiver<AppEvent>)
                 let _ = tray.set_tooltip(Some(&text));
             }
             last = text;
+        }
+    }
+}
+
+/// Makes the OS login item match the setting.
+pub fn apply_autostart(app: &AppHandle, enabled: bool, bus: &EventBus) {
+    match crate::autostart::set(app, enabled) {
+        Ok(()) => tracing::debug!(enabled, "start-at-login applied"),
+        Err(err) => bus.notice(NoticeLevel::Error, format!("Couldn't change \"start with the computer\": {err}")),
+    }
+}
+
+/// Re-applies the start-at-login setting whenever settings change.
+pub async fn autostart_loop(app: AppHandle, bus: EventBus, mut rx: broadcast::Receiver<AppEvent>) {
+    loop {
+        match rx.recv().await {
+            Ok(AppEvent::Settings(s)) => apply_autostart(&app, s.launch_at_startup, &bus),
+            Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+            Err(broadcast::error::RecvError::Closed) => return,
         }
     }
 }

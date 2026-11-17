@@ -112,6 +112,11 @@ export function SettingsView() {
             Keep running in the tray when the window is closed
           </label>
           <label className="check">
+            <input type="checkbox" checked={settings.launchAtStartup}
+              onChange={(e) => patch((s) => ({ ...s, launchAtStartup: e.target.checked }))} />
+            Start automatically when I sign in to my computer (opens in the tray)
+          </label>
+          <label className="check">
             <input type="checkbox" checked={settings.startInTray}
               onChange={(e) => patch((s) => ({ ...s, startInTray: e.target.checked }))} />
             Start in the tray (do not open this window on launch)

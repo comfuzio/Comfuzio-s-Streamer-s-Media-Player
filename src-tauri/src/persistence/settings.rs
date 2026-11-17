@@ -275,6 +275,8 @@ pub struct Settings {
     pub start_in_tray: bool,
     /// Look for a new release on GitHub shortly after startup.
     pub auto_check_updates: bool,
+    /// Launch (into the tray) when the user signs in to the OS.
+    pub launch_at_startup: bool,
     pub library: LibrarySettings,
     pub auto_dj: AutoDjSettings,
 }
@@ -300,6 +302,7 @@ impl Default for Settings {
             close_to_tray: true,
             start_in_tray: false,
             auto_check_updates: true,
+            launch_at_startup: false,
             library: LibrarySettings::default(),
             auto_dj: AutoDjSettings::default(),
         }
