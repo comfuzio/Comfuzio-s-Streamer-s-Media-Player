@@ -128,7 +128,8 @@
       }
       requestAnimationFrame(updateMarquee);
     }
-    el.requester.textContent = item.requester ? `requested by ${item.requester.displayName}` : "";
+    el.requester.textContent = !item.requester ? ""
+      : item.autoplay ? `from ${item.requester.displayName}` : `requested by ${item.requester.displayName}`;
     el.statusText.textContent = status === "paused" ? "Paused" : status === "loading" ? "Loading" : "Now playing";
     el.total.textContent = clock(item.track.durationMs);
     el.upNext.textContent = upNext ? `Up next: ${upNext.artist ? `${upNext.artist} - ` : ""}${upNext.title}` : "";

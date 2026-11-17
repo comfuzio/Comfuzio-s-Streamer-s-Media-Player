@@ -81,7 +81,14 @@ impl YtSearchEntry {
 #[derive(Deserialize)]
 struct SearchResult {
     #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
     entries: Vec<YtSearchEntry>,
+}
+
+/// Placeholder titles YouTube uses for playlist entries that cannot be played.
+fn is_unavailable(e: &YtSearchEntry) -> bool {
+    matches!(e.title.as_deref(), Some("[Private video]" | "[Deleted video]" | "[Unavailable video]"))
 }
 
 pub fn watch_url(video_id: &str) -> String {
@@ -183,6 +190,22 @@ impl YtDlp {
         let q = format!("ytsearch{}:{}", limit.clamp(1, 20), query);
         let res: SearchResult = self.run_json(&["-J", "--flat-playlist", "--", &q], METADATA_TIMEOUT).await?;
         Ok(res.entries.into_iter().filter(|e| crate::resolver::input::is_youtube_id(&e.id)).collect())
+    }
+
+    /// Lists a playlist's videos (flat: no per-video extraction). Returns (title, entries).
+    pub async fn playlist(&self, list_id: &str) -> AppResult<(String, Vec<YtSearchEntry>)> {
+        // Auto-generated mixes ("RD" + seed video id) are only listable through a watch URL.
+        let url = match list_id.strip_prefix("RD").filter(|seed| crate::resolver::input::is_youtube_id(seed)) {
+            Some(seed) => format!("https://www.youtube.com/watch?v={seed}&list={list_id}"),
+            None => format!("https://www.youtube.com/playlist?list={list_id}"),
+        };
+        let res: SearchResult = self.run_json(&["-J", "--flat-playlist", "--", &url], Duration::from_secs(180)).await?;
+        let entries = res
+            .entries
+            .into_iter()
+            .filter(|e| crate::resolver::input::is_youtube_id(&e.id) && !is_unavailable(e))
+            .collect();
+        Ok((res.title.unwrap_or_else(|| "YouTube playlist".into()), entries))
     }
 
     /// Downloads the best decodable audio-only stream into `dir` and returns the file path.

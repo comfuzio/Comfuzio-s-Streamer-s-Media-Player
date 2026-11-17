@@ -76,12 +76,16 @@ impl CommandHandler {
                 match (&snap.current, snap.status) {
                     (Some(item), PlayerStatus::Playing | PlayerStatus::Paused | PlayerStatus::Loading) => {
                         let paused = if snap.status == PlayerStatus::Paused { " (paused)" } else { "" };
+                        let who = if item.autoplay {
+                            format!("from the {} playlist", item.requester.display_name)
+                        } else {
+                            format!("requested by {}", item.requester.display_name)
+                        };
                         format!(
-                            "now playing: {} [{} / {}]{paused}, requested by {}",
+                            "now playing: {} [{} / {}]{paused}, {who}",
                             item.track.display_name(),
                             format_clock_ms(snap.position_ms),
                             format_clock_ms(snap.duration_ms),
-                            item.requester.display_name
                         )
                     }
                     _ => "nothing is playing right now".into(),

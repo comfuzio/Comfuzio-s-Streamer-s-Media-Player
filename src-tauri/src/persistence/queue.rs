@@ -41,7 +41,7 @@ impl Database {
             for row in rows {
                 let (queue_id, track_json, requester_json, added_at_ms) = row?;
                 match (serde_json::from_str::<Track>(&track_json), serde_json::from_str::<Requester>(&requester_json)) {
-                    (Ok(track), Ok(requester)) => items.push(QueueItem { queue_id, track, requester, added_at_ms }),
+                    (Ok(track), Ok(requester)) => items.push(QueueItem { queue_id, track, requester, added_at_ms, autoplay: false }),
                     _ => tracing::warn!(%queue_id, "dropping unreadable persisted queue row"),
                 }
             }
@@ -102,6 +102,7 @@ mod tests {
             },
             requester: Requester::local(),
             added_at_ms: 1,
+            autoplay: false,
         }
     }
 

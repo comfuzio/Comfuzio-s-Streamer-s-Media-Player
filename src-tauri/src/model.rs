@@ -1,16 +1,35 @@
 //! Domain types shared by the resolver, queue, persistence and IPC layers.
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
-/// Where a track came from. Every track is ultimately played from a YouTube
-/// audio stream; Spotify tracks carry the matched video id.
+/// Where a track came from. Online tracks play from a YouTube audio stream
+/// (Spotify tracks via their matched video); local tracks play from disk.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TrackOrigin {
     #[serde(rename_all = "camelCase")]
     YouTube { video_id: String },
+    /// `matched_video_id` is filled when the track is first played, so large
+    /// imported playlists don't need hundreds of YouTube searches up front.
     #[serde(rename_all = "camelCase")]
-    Spotify { track_id: String, matched_video_id: String },
+    Spotify {
+        track_id: String,
+        #[serde(default)]
+        matched_video_id: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Local { path: String, library_id: Option<i64> },
+}
+
+/// How to obtain the audio for a track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackSource<'a> {
+    YouTube(&'a str),
+    File(&'a Path),
+    /// A Spotify track that still needs a YouTube match.
+    Unresolved,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,11 +56,24 @@ impl Track {
         format!("sp:{track_id}")
     }
 
-    /// The YouTube video whose audio is played for this track.
-    pub fn playback_video_id(&self) -> &str {
+    pub fn file_key(path: &str) -> String {
+        format!("file:{path}")
+    }
+
+    pub fn playback(&self) -> PlaybackSource<'_> {
         match &self.origin {
-            TrackOrigin::YouTube { video_id } => video_id,
-            TrackOrigin::Spotify { matched_video_id, .. } => matched_video_id,
+            TrackOrigin::YouTube { video_id } => PlaybackSource::YouTube(video_id),
+            TrackOrigin::Spotify { matched_video_id: Some(v), .. } => PlaybackSource::YouTube(v),
+            TrackOrigin::Spotify { matched_video_id: None, .. } => PlaybackSource::Unresolved,
+            TrackOrigin::Local { path, .. } => PlaybackSource::File(Path::new(path)),
+        }
+    }
+
+    /// The YouTube video played for this track, if it is (already) one.
+    pub fn youtube_video_id(&self) -> Option<&str> {
+        match self.playback() {
+            PlaybackSource::YouTube(v) => Some(v),
+            _ => None,
         }
     }
 
@@ -50,8 +82,11 @@ impl Track {
         match &self.origin {
             TrackOrigin::YouTube { video_id } => vec![Self::youtube_key(video_id)],
             TrackOrigin::Spotify { track_id, matched_video_id } => {
-                vec![Self::spotify_key(track_id), Self::youtube_key(matched_video_id)]
+                let mut keys = vec![Self::spotify_key(track_id)];
+                keys.extend(matched_video_id.as_deref().map(Self::youtube_key));
+                keys
             }
+            TrackOrigin::Local { path, .. } => vec![Self::file_key(path)],
         }
     }
 
@@ -101,6 +136,9 @@ pub struct QueueItem {
     pub track: Track,
     pub requester: Requester,
     pub added_at_ms: i64,
+    /// Picked by Auto-DJ from a playlist (requester = the playlist) rather than requested.
+    #[serde(default)]
+    pub autoplay: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

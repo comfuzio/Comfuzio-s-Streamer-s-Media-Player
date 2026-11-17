@@ -1,3 +1,3 @@
 pub mod controller;
 
-pub use controller::{BlockOutcome, PlaybackController, QueueSummary, RequestOutcome};
+pub use controller::{shuffle, BlockOutcome, PlaybackController, QueueSummary, RequestOutcome};

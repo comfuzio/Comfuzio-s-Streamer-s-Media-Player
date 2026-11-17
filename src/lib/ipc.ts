@@ -8,6 +8,13 @@ import type {
   ChatPlatform,
   ChatStatus,
   DeviceLogin,
+  ExportOutcome,
+  ImportOutcome,
+  LibraryStatus,
+  LibraryTrack,
+  Playlist,
+  PlaylistDetail,
+  ScanSummary,
   OverlayInfo,
   QuotaUsage,
   OutputDevice,
@@ -56,6 +63,31 @@ export const api = {
   overlay: {
     info: () => invoke<OverlayInfo>("overlay_info"),
   },
+  library: {
+    status: () => invoke<LibraryStatus>("library_status"),
+    scan: () => invoke<ScanSummary>("library_scan"),
+    search: (query: string) => invoke<LibraryTrack[]>("library_search", { query }),
+    enqueue: (ids: number[], next: boolean) => invoke<number>("library_enqueue", { ids, next }),
+  },
+  playlists: {
+    list: () => invoke<Playlist[]>("playlists_list"),
+    get: (id: number) => invoke<PlaylistDetail>("playlist_get", { id }),
+    create: (name: string) => invoke<Playlist>("playlist_create", { name }),
+    rename: (id: number, name: string) => invoke<Playlist>("playlist_rename", { id, name }),
+    remove: (id: number) => invoke<void>("playlist_delete", { id }),
+    addLibrary: (id: number, libraryIds: number[]) => invoke<number>("playlist_add_library", { id, libraryIds }),
+    addLink: (id: number, input: string) => invoke<void>("playlist_add_link", { id, input }),
+    addQueue: (id: number) => invoke<number>("playlist_add_queue", { id }),
+    removeItem: (itemId: number) => invoke<void>("playlist_remove_item", { itemId }),
+    moveItem: (itemId: number, toIndex: number) => invoke<void>("playlist_move_item", { itemId, toIndex }),
+    enqueue: (id: number, shuffle: boolean) => invoke<number>("playlist_enqueue", { id, shuffle }),
+    importM3u: (path: string) => invoke<ImportOutcome>("playlist_import_m3u", { path }),
+    importUrl: (url: string) => invoke<ImportOutcome>("playlist_import_url", { url }),
+    sync: (id: number) => invoke<ImportOutcome>("playlist_sync", { id }),
+    exportM3u: (id: number, path: string) => invoke<ExportOutcome>("playlist_export_m3u", { id, path }),
+    exportYoutube: (id: number) => invoke<ExportOutcome>("playlist_export_youtube", { id }),
+    exportSpotify: (id: number) => invoke<ExportOutcome>("playlist_export_spotify", { id }),
+  },
   chat: {
     statuses: () => invoke<ChatStatus[]>("chat_statuses"),
     reconnect: (platform: ChatPlatform) => invoke<void>("chat_reconnect", { platform }),
@@ -83,4 +115,10 @@ export function formatClock(ms: number): string {
   const s = total % 60;
   const ss = String(s).padStart(2, "0");
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+/** Local artwork is served by the overlay server; turn its relative path into a URL. */
+export function artUrl(url: string | null | undefined, overlayPort: number | undefined): string | null {
+  if (!url) return null;
+  return url.startsWith("/") ? `http://127.0.0.1:${overlayPort ?? 3847}${url}` : url;
 }

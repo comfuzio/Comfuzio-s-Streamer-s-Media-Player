@@ -9,10 +9,12 @@ use crate::chat::twitch::TwitchClient;
 use crate::chat::youtube::YouTubeClient;
 use crate::error::{AppError, AppResult};
 use crate::events::EventBus;
+use crate::library::Library;
 use crate::overlay::OverlayServer;
 use crate::persistence::settings::SettingsStore;
 use crate::persistence::Database;
 use crate::player::PlaybackController;
+use crate::playlists::Playlists;
 use crate::resolver::spotify::SpotifyClient;
 use crate::resolver::ytdlp::YtDlp;
 use crate::resolver::Resolver;
@@ -25,6 +27,8 @@ pub struct AppState {
     pub ytdlp: Arc<YtDlp>,
     pub spotify: Arc<SpotifyClient>,
     pub player: Arc<PlaybackController>,
+    pub library: Arc<Library>,
+    pub playlists: Arc<Playlists>,
     pub chat: Arc<ChatHub>,
     pub overlay: Arc<OverlayServer>,
 }
@@ -52,13 +56,24 @@ impl AppState {
         let spotify = Arc::new(SpotifyClient::new(http.clone(), db.clone(), settings.clone()).await?);
         let twitch = Arc::new(TwitchClient::new(http.clone(), db.clone(), settings.clone(), bus.clone()).await?);
         let youtube = Arc::new(YouTubeClient::new(http, db.clone(), settings.clone(), bus.clone()).await?);
-        let resolver = Arc::new(Resolver::new(ytdlp.clone(), spotify.clone(), settings.clone()));
+        let library = Arc::new(Library::new(db.clone(), settings.clone(), bus.clone()));
+        let resolver = Arc::new(Resolver::new(ytdlp.clone(), spotify.clone(), settings.clone(), library.clone()));
+        let playlists = Arc::new(Playlists::new(
+            db.clone(),
+            bus.clone(),
+            library.clone(),
+            resolver.clone(),
+            ytdlp.clone(),
+            spotify.clone(),
+            youtube.clone(),
+        ));
         let cache = Arc::new(AudioCache::new(cache_dir, ytdlp.clone(), settings.clone())?);
-        let player = PlaybackController::start(db.clone(), settings.clone(), resolver, cache, bus.clone()).await?;
+        let player =
+            PlaybackController::start(db.clone(), settings.clone(), resolver, cache, playlists.clone(), bus.clone()).await?;
 
         let chat = ChatHub::start(player.clone(), settings.clone(), bus.clone(), twitch, youtube);
-        let overlay = OverlayServer::start(player.clone(), settings.clone(), bus.clone());
+        let overlay = OverlayServer::start(player.clone(), settings.clone(), bus.clone(), library.clone());
 
-        Ok(Self { bus, db, settings, ytdlp, spotify, player, chat, overlay })
+        Ok(Self { bus, db, settings, ytdlp, spotify, player, library, playlists, chat, overlay })
     }
 }

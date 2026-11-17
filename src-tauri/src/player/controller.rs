@@ -5,6 +5,7 @@
 //! finishes after a skip/stop is recognized as stale and dropped.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,8 +16,11 @@ use crate::audio::cache::AudioCache;
 use crate::audio::{AudioEngine, EngineEvent};
 use crate::error::{AppError, AppResult, Rejection};
 use crate::events::{AppEvent, EventBus, NoticeLevel};
-use crate::model::{BlockEntry, PlayerSnapshot, PlayerStatus, QueueItem, QueueSnapshot, Requester};
+use crate::model::{
+    BlockEntry, PlaybackSource, Platform, PlayerSnapshot, PlayerStatus, QueueItem, QueueSnapshot, Requester, Track,
+};
 use crate::persistence::settings::SettingsStore;
+use crate::playlists::Playlists;
 use crate::persistence::Database;
 use crate::resolver::Resolver;
 use crate::util::duration::{clamp_max_length, parse_human_duration};
@@ -56,8 +60,40 @@ struct Inner {
     generation: u64,
 }
 
+/// Auto-DJ position in its playlist (reloaded when exhausted or the playlist changes).
+struct AutoDjCursor {
+    playlist_id: i64,
+    shuffle: bool,
+    name: String,
+    order: Vec<Track>,
+    pos: usize,
+}
+
+/// Consecutive load failures after which playback gives up (prevents a busy
+/// loop when, say, a whole Auto-DJ playlist points at missing files).
+const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+/// In-place Fisher-Yates shuffle seeded from the OS RNG.
+pub fn shuffle<T>(items: &mut [T]) {
+    let mut seed = [0u8; 8];
+    if getrandom::fill(&mut seed).is_err() {
+        seed = (crate::util::now_ms() as u64).to_le_bytes();
+    }
+    let mut state = u64::from_le_bytes(seed) | 1;
+    for i in (1..items.len()).rev() {
+        // xorshift64*
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let r = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        items.swap(i, (r % (i as u64 + 1)) as usize);
+    }
+}
+
 pub struct PlaybackController {
     inner: Mutex<Inner>,
+    autodj: Mutex<Option<AutoDjCursor>>,
+    playlists: Arc<Playlists>,
     engine: AudioEngine,
     cache: Arc<AudioCache>,
     resolver: Arc<Resolver>,
@@ -74,6 +110,7 @@ impl PlaybackController {
         settings: Arc<SettingsStore>,
         resolver: Arc<Resolver>,
         cache: Arc<AudioCache>,
+        playlists: Arc<Playlists>,
         bus: EventBus,
     ) -> AppResult<Arc<Self>> {
         let restored = db.load_queue().await?;
@@ -89,6 +126,8 @@ impl PlaybackController {
                 queue: restored.into(),
                 generation: 0,
             }),
+            autodj: Mutex::new(None),
+            playlists,
             engine,
             cache,
             resolver,
@@ -100,7 +139,12 @@ impl PlaybackController {
 
         tauri::async_runtime::spawn(persist_loop(db, persist_rx));
         tauri::async_runtime::spawn(engine_event_loop(Arc::downgrade(&ctrl), engine_rx));
-        tauri::async_runtime::spawn(settings_loop(Arc::downgrade(&ctrl), bus.subscribe(), initial.output_device));
+        tauri::async_runtime::spawn(settings_loop(
+            Arc::downgrade(&ctrl),
+            bus.subscribe(),
+            initial.output_device,
+            initial.auto_dj.clone(),
+        ));
 
         {
             let inner = ctrl.inner.lock().await;
@@ -145,7 +189,8 @@ impl PlaybackController {
     }
 
     fn publish_queue(&self, inner: &Inner) {
-        let persisted: Vec<QueueItem> = inner.current.iter().chain(inner.queue.iter()).cloned().collect();
+        let persisted: Vec<QueueItem> =
+            inner.current.iter().filter(|c| !c.autoplay).chain(inner.queue.iter()).cloned().collect();
         self.persist_tx.send_replace(persisted);
         self.bus.emit(AppEvent::Queue(Self::queue_snapshot_of(inner)));
     }
@@ -170,6 +215,16 @@ impl PlaybackController {
     /// bypasses the max length and per-user limits, never the blocklist.
     pub async fn request(self: &Arc<Self>, input: &str, requester: Requester, privileged: bool) -> AppResult<RequestOutcome> {
         let track = self.resolver.resolve(input).await?;
+        self.enqueue_track(track, requester, privileged).await
+    }
+
+    /// Validates and queues an already resolved track.
+    pub async fn enqueue_track(
+        self: &Arc<Self>,
+        track: Track,
+        requester: Requester,
+        privileged: bool,
+    ) -> AppResult<RequestOutcome> {
         let settings = self.settings.get();
 
         if self.db.blocklist_find(track.block_keys()).await?.is_some() {
@@ -189,7 +244,13 @@ impl PlaybackController {
             return Err(AppError::rejected(Rejection::QueueFull { limit: settings.queue.max_size }));
         }
         if !settings.queue.allow_duplicates {
-            let dup = inner.current.iter().chain(inner.queue.iter()).any(|i| i.track.key == track.key);
+            // An Auto-DJ song that happens to be playing doesn't block a real request for it.
+            let dup = inner
+                .current
+                .iter()
+                .filter(|c| !c.autoplay)
+                .chain(inner.queue.iter())
+                .any(|i| i.track.key == track.key);
             if dup {
                 return Err(AppError::rejected(Rejection::Duplicate { title: track.display_name() }));
             }
@@ -202,7 +263,13 @@ impl PlaybackController {
         }
 
         let eta_ms = self.remaining_current_ms(&inner) + inner.queue.iter().map(|i| i.track.duration_ms).sum::<u64>();
-        let item = QueueItem { queue_id: uuid::Uuid::new_v4().to_string(), track, requester, added_at_ms: now_ms() };
+        let item = QueueItem {
+            queue_id: uuid::Uuid::new_v4().to_string(),
+            track,
+            requester,
+            added_at_ms: now_ms(),
+            autoplay: false,
+        };
         inner.queue.push_back(item.clone());
         let position = inner.queue.len();
         self.publish_queue(&inner);
@@ -215,6 +282,55 @@ impl PlaybackController {
             _ => {}
         }
         Ok(RequestOutcome { item, position, eta_ms })
+    }
+
+    /// Streamer bulk add (library selection, whole playlist). Blocked songs and,
+    /// unless duplicates are allowed, songs already queued are skipped.
+    /// `next` inserts them right after the current song. Returns how many were added.
+    pub async fn enqueue_many(self: &Arc<Self>, tracks: Vec<Track>, next: bool) -> AppResult<usize> {
+        let settings = self.settings.get();
+        let mut allowed = Vec::with_capacity(tracks.len());
+        for t in tracks {
+            if self.db.blocklist_find(t.block_keys()).await?.is_none() {
+                allowed.push(t);
+            }
+        }
+        let mut inner = self.inner.lock().await;
+        let mut items = Vec::with_capacity(allowed.len());
+        for track in allowed {
+            let dup = !settings.queue.allow_duplicates
+                && (inner.queue.iter().chain(items.iter()).any(|i: &QueueItem| i.track.key == track.key)
+                    || inner.current.as_ref().is_some_and(|c| !c.autoplay && c.track.key == track.key));
+            if !dup {
+                items.push(QueueItem {
+                    queue_id: uuid::Uuid::new_v4().to_string(),
+                    track,
+                    requester: Requester::local(),
+                    added_at_ms: now_ms(),
+                    autoplay: false,
+                });
+            }
+        }
+        let added = items.len();
+        if added == 0 {
+            return Ok(0);
+        }
+        if next {
+            for item in items.into_iter().rev() {
+                inner.queue.push_front(item);
+            }
+        } else {
+            inner.queue.extend(items);
+        }
+        self.publish_queue(&inner);
+        let (status, first) = (inner.status, inner.queue.len() == added || next);
+        drop(inner);
+        match status {
+            PlayerStatus::Idle => self.spawn_advance(),
+            PlayerStatus::Playing | PlayerStatus::Paused | PlayerStatus::Loading if first => self.spawn_prefetch(),
+            _ => {}
+        }
+        Ok(added)
     }
 
     /// Removes `requester`'s most recently queued song.
@@ -266,7 +382,8 @@ impl PlaybackController {
             PlayerStatus::Stopped => {
                 inner.status = PlayerStatus::Idle;
                 self.publish_player(&inner);
-                !inner.queue.is_empty()
+                // Auto-DJ can play even when nobody has requested anything yet.
+                !inner.queue.is_empty() || self.settings.get().auto_dj.enabled
             }
             PlayerStatus::Paused => {
                 self.engine.resume();
@@ -282,6 +399,15 @@ impl PlaybackController {
             self.spawn_advance();
         }
         snapshot
+    }
+
+    /// Pauses while playing, otherwise starts/resumes (tray and hotkeys).
+    pub async fn toggle(self: &Arc<Self>) -> PlayerSnapshot {
+        if self.inner.lock().await.status == PlayerStatus::Playing {
+            self.pause().await
+        } else {
+            self.play().await
+        }
     }
 
     pub async fn pause(&self) -> PlayerSnapshot {
@@ -303,7 +429,7 @@ impl PlaybackController {
         }
         inner.generation += 1;
         self.engine.stop();
-        if let Some(cur) = inner.current.take() {
+        if let Some(cur) = inner.current.take().filter(|c| !c.autoplay) {
             inner.queue.push_front(cur);
         }
         inner.status = PlayerStatus::Stopped;
@@ -453,7 +579,7 @@ impl PlaybackController {
         tauri::async_runtime::spawn(async move {
             let (next, protect) = {
                 let inner = this.inner.lock().await;
-                (inner.queue.front().map(|i| i.track.playback_video_id().to_owned()), Self::protected_ids(&inner))
+                (inner.queue.front().and_then(|i| i.track.youtube_video_id().map(str::to_owned)), Self::protected_ids(&inner))
             };
             if let Some(id) = next {
                 if let Err(err) = this.cache.fetch(&id, &protect).await {
@@ -464,7 +590,12 @@ impl PlaybackController {
     }
 
     fn protected_ids(inner: &Inner) -> Vec<String> {
-        inner.current.iter().chain(inner.queue.iter().take(2)).map(|i| i.track.playback_video_id().to_owned()).collect()
+        inner
+            .current
+            .iter()
+            .chain(inner.queue.iter().take(2))
+            .filter_map(|i| i.track.youtube_video_id().map(str::to_owned))
+            .collect()
     }
 
     fn record_history(&self, item: QueueItem, skipped: bool) {
@@ -476,43 +607,127 @@ impl PlaybackController {
         });
     }
 
-    /// Pops and plays the next queue item, skipping items that fail to load.
+    /// Next Auto-DJ song, if Auto-DJ is on (skips blocked songs).
+    async fn next_autodj_item(&self) -> Option<QueueItem> {
+        let cfg = self.settings.get().auto_dj;
+        if !cfg.enabled {
+            return None;
+        }
+        let playlist_id = cfg.playlist_id?;
+        let mut cursor = self.autodj.lock().await;
+        for _pass in 0..2 {
+            let stale = cursor
+                .as_ref()
+                .is_none_or(|c| c.playlist_id != playlist_id || c.shuffle != cfg.shuffle || c.pos >= c.order.len());
+            if stale {
+                let playlist = self.playlists.get(playlist_id).await.ok()?;
+                let mut order: Vec<Track> =
+                    self.playlists.tracks(playlist_id).await.ok()?.into_iter().map(|i| i.track).collect();
+                if order.is_empty() {
+                    return None;
+                }
+                if cfg.shuffle {
+                    shuffle(&mut order);
+                }
+                *cursor = Some(AutoDjCursor { playlist_id, shuffle: cfg.shuffle, name: playlist.name, order, pos: 0 });
+            }
+            let c = cursor.as_mut()?;
+            while c.pos < c.order.len() {
+                let track = c.order[c.pos].clone();
+                c.pos += 1;
+                if matches!(self.db.blocklist_find(track.block_keys()).await, Ok(Some(_))) {
+                    continue;
+                }
+                return Some(QueueItem {
+                    queue_id: uuid::Uuid::new_v4().to_string(),
+                    track,
+                    requester: Requester { platform: Platform::Local, user_id: "autodj".into(), display_name: c.name.clone() },
+                    added_at_ms: now_ms(),
+                    autoplay: true,
+                });
+            }
+        }
+        None
+    }
+
+    /// Gets a playable file for `track`. Returns the (possibly completed) track too:
+    /// lazily imported Spotify songs get their YouTube match here.
+    async fn prepare(&self, track: &Track, protect: &[String]) -> AppResult<(PathBuf, Option<Track>)> {
+        match track.playback() {
+            PlaybackSource::YouTube(id) => Ok((self.cache.fetch(id, protect).await?, None)),
+            PlaybackSource::File(path) => {
+                if path.is_file() {
+                    Ok((path.to_path_buf(), None))
+                } else {
+                    Err(AppError::NotFound(format!("file is missing: {}", path.display())))
+                }
+            }
+            PlaybackSource::Unresolved => {
+                let completed = self.resolver.complete(track).await?;
+                let id = completed
+                    .youtube_video_id()
+                    .ok_or_else(|| AppError::Internal("Spotify match produced no video".into()))?
+                    .to_owned();
+                Ok((self.cache.fetch(&id, protect).await?, Some(completed)))
+            }
+        }
+    }
+
+    /// Plays the next request, or the next Auto-DJ song when no requests are
+    /// waiting. Songs that fail to load are skipped.
     async fn advance(self: &Arc<Self>) {
+        let mut failures = 0u32;
         loop {
-            let (item, generation, protect) = {
+            let (popped, generation) = {
                 let mut inner = self.inner.lock().await;
                 if inner.status == PlayerStatus::Stopped {
                     return;
                 }
                 inner.generation += 1;
-                match inner.queue.pop_front() {
-                    Some(item) => {
-                        inner.current = Some(item.clone());
-                        inner.status = PlayerStatus::Loading;
-                        self.publish_player(&inner);
-                        self.publish_queue(&inner);
-                        (item, inner.generation, Self::protected_ids(&inner))
-                    }
+                (inner.queue.pop_front(), inner.generation)
+            };
+            let item = match popped {
+                Some(item) => item,
+                None => match self.next_autodj_item().await {
+                    Some(item) => item,
                     None => {
-                        self.engine.stop();
-                        inner.current = None;
-                        inner.status = PlayerStatus::Idle;
-                        self.publish_player(&inner);
-                        self.publish_queue(&inner);
+                        let mut inner = self.inner.lock().await;
+                        if inner.generation == generation {
+                            self.engine.stop();
+                            inner.current = None;
+                            inner.status = PlayerStatus::Idle;
+                            self.publish_player(&inner);
+                            self.publish_queue(&inner);
+                        }
                         return;
                     }
-                }
+                },
             };
 
-            let video_id = item.track.playback_video_id().to_owned();
-            let fetched = self.cache.fetch(&video_id, &protect).await;
+            let protect = {
+                let mut inner = self.inner.lock().await;
+                if inner.generation != generation {
+                    // Superseded while picking an Auto-DJ song (e.g. stop); drop it.
+                    return;
+                }
+                inner.current = Some(item.clone());
+                inner.status = PlayerStatus::Loading;
+                self.publish_player(&inner);
+                self.publish_queue(&inner);
+                Self::protected_ids(&inner)
+            };
+
+            let prepared = self.prepare(&item.track, &protect).await;
 
             let mut inner = self.inner.lock().await;
             if inner.generation != generation {
                 return; // superseded by skip/stop/another advance
             }
-            match fetched {
-                Ok(path) => {
+            match prepared {
+                Ok((path, completed)) => {
+                    if let (Some(track), Some(cur)) = (completed, inner.current.as_mut()) {
+                        cur.track = track;
+                    }
                     self.engine.load(path, generation, 0, false);
                     inner.status = PlayerStatus::Playing;
                     self.publish_player(&inner);
@@ -522,7 +737,23 @@ impl PlaybackController {
                 }
                 Err(err) => {
                     drop(inner);
+                    failures += 1;
                     self.bus.notice(NoticeLevel::Error, format!("Couldn't load \"{}\": {err}", item.track.display_name()));
+                    if failures >= MAX_CONSECUTIVE_FAILURES {
+                        let mut inner = self.inner.lock().await;
+                        if inner.generation == generation {
+                            self.engine.stop();
+                            inner.current = None;
+                            inner.status = PlayerStatus::Idle;
+                            self.publish_player(&inner);
+                            self.publish_queue(&inner);
+                        }
+                        self.bus.notice(
+                            NoticeLevel::Warning,
+                            format!("{failures} songs in a row failed to load; waiting for the next request"),
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -552,7 +783,9 @@ impl PlaybackController {
                     inner.current.take()
                 };
                 if let Some(item) = failed {
-                    self.cache.evict(item.track.playback_video_id());
+                    if let Some(video_id) = item.track.youtube_video_id() {
+                        self.cache.evict(video_id);
+                    }
                     self.bus.notice(NoticeLevel::Error, format!("Playback failed for \"{}\": {message}", item.track.display_name()));
                 }
                 self.advance().await;
@@ -564,7 +797,7 @@ impl PlaybackController {
     pub fn shutdown(&self) {
         let items: Vec<QueueItem> = {
             let inner = tauri::async_runtime::block_on(self.inner.lock());
-            inner.current.iter().chain(inner.queue.iter()).cloned().collect()
+            inner.current.iter().filter(|c| !c.autoplay).chain(inner.queue.iter()).cloned().collect()
         };
         if let Err(err) = self.db.save_queue_blocking(&items) {
             tracing::error!(%err, "failed to persist queue on exit");
@@ -595,6 +828,7 @@ async fn settings_loop(
     ctrl: std::sync::Weak<PlaybackController>,
     mut rx: broadcast::Receiver<AppEvent>,
     mut device: Option<String>,
+    mut auto_dj: crate::persistence::settings::AutoDjSettings,
 ) {
     loop {
         let settings = match rx.recv().await {
@@ -610,5 +844,30 @@ async fn settings_loop(
         }
         let inner = ctrl.inner.lock().await;
         ctrl.publish_player(&inner);
+        let idle = inner.status == PlayerStatus::Idle;
+        drop(inner);
+        if settings.auto_dj != auto_dj {
+            auto_dj = settings.auto_dj.clone();
+            *ctrl.autodj.lock().await = None;
+            // Turning Auto-DJ on while waiting for requests starts it right away.
+            if idle && auto_dj.enabled {
+                ctrl.spawn_advance();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shuffle;
+
+    #[test]
+    fn shuffle_is_a_permutation() {
+        let mut v: Vec<u32> = (0..100).collect();
+        shuffle(&mut v);
+        let mut sorted = v.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..100).collect::<Vec<_>>());
+        assert_ne!(v, (0..100).collect::<Vec<_>>(), "100 elements should not stay in order");
     }
 }

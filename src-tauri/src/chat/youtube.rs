@@ -42,6 +42,8 @@ const PLATFORM: ChatPlatform = ChatPlatform::YouTube;
 const COST_LIST: u32 = 1;
 const COST_CHAT_LIST: u32 = 5;
 const COST_CHAT_INSERT: u32 = 20;
+const COST_PLAYLIST_INSERT: u32 = 50;
+const COST_PLAYLIST_ITEM: u32 = 50;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -343,6 +345,59 @@ impl YouTubeClient {
             let chat = b["snippet"]["liveChatId"].as_str()?;
             Some((chat.to_owned(), b["snippet"]["title"].as_str().unwrap_or("live").to_owned()))
         }))
+    }
+
+    // ------------------------------------------------------------------ playlists
+
+    /// Creates a private YouTube playlist with `video_ids`. Each insert costs
+    /// 50 quota units, so the whole export is checked against today's budget first.
+    pub async fn export_playlist(&self, title: &str, video_ids: &[String]) -> AppResult<(String, usize)> {
+        if self.tokens.lock().await.is_none() {
+            return Err(AppError::Invalid("sign in with Google on the Chat bot tab first".into()));
+        }
+        let needed = COST_PLAYLIST_INSERT + COST_PLAYLIST_ITEM * video_ids.len() as u32;
+        let budget = self.settings.get().youtube_chat.daily_quota;
+        let used = self.quota_usage().await.used;
+        if used + needed > budget {
+            return Err(AppError::Invalid(format!(
+                "exporting {} songs needs {needed} YouTube API units, but only {} of today's {budget} are left",
+                video_ids.len(),
+                budget.saturating_sub(used)
+            )));
+        }
+        let to_err = |e: ApiError| match e {
+            ApiError::Other(e) => e,
+            ApiError::QuotaExceeded => AppError::Invalid("YouTube API quota used up for today".into()),
+            ApiError::ChatGone => AppError::Internal("unexpected chat error".into()),
+        };
+        let body = json!({
+            "snippet": { "title": title, "description": "Exported from Comfuzio Streamer's Media Player" },
+            "status": { "privacyStatus": "private" },
+        });
+        let created = self
+            .api(reqwest::Method::POST, "/playlists", &[("part", "snippet,status")], Some(&body), COST_PLAYLIST_INSERT)
+            .await
+            .map_err(to_err)?;
+        let playlist_id = created["id"]
+            .as_str()
+            .ok_or_else(|| AppError::Internal("YouTube returned no playlist id".into()))?
+            .to_owned();
+        let mut added = 0;
+        for video_id in video_ids {
+            let item = json!({
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": { "kind": "youtube#video", "videoId": video_id },
+                }
+            });
+            match self.api(reqwest::Method::POST, "/playlistItems", &[("part", "snippet")], Some(&item), COST_PLAYLIST_ITEM).await {
+                Ok(_) => added += 1,
+                Err(ApiError::QuotaExceeded) => break,
+                // A single unavailable video shouldn't abort the export.
+                Err(err) => tracing::warn!(video_id, error = %to_err(err), "could not add video to YouTube playlist"),
+            }
+        }
+        Ok((format!("https://www.youtube.com/playlist?list={playlist_id}"), added))
     }
 
     // ------------------------------------------------------------------ connection

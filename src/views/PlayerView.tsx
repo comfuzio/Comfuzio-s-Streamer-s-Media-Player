@@ -1,7 +1,7 @@
 import { useState, type DragEvent, type FormEvent } from "react";
 import { ExternalLink } from "../components/ExternalLink";
 import { Icon } from "../components/Icon";
-import { api, formatClock } from "../lib/ipc";
+import { api, artUrl, formatClock } from "../lib/ipc";
 import { usePlaybackPosition, useStore } from "../lib/store";
 import type { PlayerStatus, QueueItem } from "../lib/types";
 
@@ -27,7 +27,7 @@ function NowPlaying() {
       <div className={`vinyl${status === "playing" ? " spinning" : ""}${item ? "" : " empty"}`} aria-hidden="true">
         <div className="vinyl-disc">
           <div className="vinyl-label">
-            {item?.track.artworkUrl ? <img src={item.track.artworkUrl} alt="" referrerPolicy="no-referrer" /> : <Icon name="music" size={26} />}
+            {item?.track.artworkUrl ? <img src={artUrl(item.track.artworkUrl, settings?.overlayPort) ?? ""} alt="" referrerPolicy="no-referrer" /> : <Icon name="music" size={26} />}
           </div>
         </div>
         <div className="vinyl-sheen" />
@@ -38,9 +38,11 @@ function NowPlaying() {
         <div className="np-artist">{item?.track.artist ?? "Start the player, then request a song below or from chat."}</div>
         {item && (
           <div className="np-meta">
-            requested by <strong>{item.requester.displayName}</strong>
+            {item.autoplay ? <>Auto-DJ from <strong>{item.requester.displayName}</strong></> : <>requested by <strong>{item.requester.displayName}</strong></>}
             {" · "}
-            <ExternalLink href={item.track.sourceUrl}>{item.track.origin.kind === "spotify" ? "Spotify" : "YouTube"}</ExternalLink>
+            {item.track.origin.kind === "local"
+              ? <span title={item.track.sourceUrl}>Local file</span>
+              : <ExternalLink href={item.track.sourceUrl}>{item.track.origin.kind === "spotify" ? "Spotify" : "YouTube"}</ExternalLink>}
           </div>
         )}
         <div className="np-progress">
@@ -102,7 +104,8 @@ function RequestBox() {
   );
 }
 
-function QueueRow({ item, index, onDragStart, onDragOver, onDrop, dragging, over }: {
+function QueueRow({ item, index, onDragStart, onDragOver, onDrop, dragging, over, port }: {
+  port: number | undefined;
   item: QueueItem; index: number; dragging: boolean; over: boolean;
   onDragStart: (e: DragEvent, index: number) => void;
   onDragOver: (e: DragEvent, index: number) => void;
@@ -119,7 +122,7 @@ function QueueRow({ item, index, onDragStart, onDragOver, onDrop, dragging, over
     >
       <span className="grip" title="Drag to reorder"><Icon name="grip" size={16} /></span>
       <span className="q-index">{index + 1}</span>
-      {item.track.artworkUrl ? <img className="q-art" src={item.track.artworkUrl} alt="" referrerPolicy="no-referrer" /> : <span className="q-art" />}
+      {item.track.artworkUrl ? <img className="q-art" src={artUrl(item.track.artworkUrl, port) ?? ""} alt="" referrerPolicy="no-referrer" /> : <span className="q-art art-placeholder"><Icon name="music" size={18} /></span>}
       <span className="q-text">
         <span className="q-title">{item.track.title}</span>
         <span className="q-sub">{item.track.artist} · {item.requester.displayName}</span>
@@ -135,7 +138,7 @@ function QueueRow({ item, index, onDragStart, onDragOver, onDrop, dragging, over
 }
 
 function QueueManager() {
-  const { queue, fail } = useStore();
+  const { queue, settings, fail } = useStore();
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
@@ -169,11 +172,14 @@ function QueueManager() {
         </button>
       </header>
       {queue.items.length === 0 ? (
-        <p className="empty">The queue is empty. Requests from chat and the box above land here.</p>
+        <p className="empty">
+          The queue is empty. Requests from chat and the box above land here.
+          {settings?.autoDj.enabled ? " Auto-DJ fills the gaps." : " Set up Auto-DJ in Playlists to keep music playing between requests."}
+        </p>
       ) : (
         <ol className="queue-list">
           {queue.items.map((item, i) => (
-            <QueueRow key={item.queueId} item={item} index={i} dragging={dragIndex === i} over={overIndex === i && dragIndex !== i}
+            <QueueRow key={item.queueId} item={item} index={i} port={settings?.overlayPort} dragging={dragIndex === i} over={overIndex === i && dragIndex !== i}
               onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop} />
           ))}
         </ol>

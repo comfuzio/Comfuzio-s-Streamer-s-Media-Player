@@ -26,6 +26,21 @@ pub fn is_youtube_id(s: &str) -> bool {
     YT_ID.is_match(s)
 }
 
+/// Extracts the `list=` id from a YouTube / YouTube Music playlist link.
+pub fn youtube_playlist_id(raw: &str) -> Option<String> {
+    let input = raw.trim();
+    let normalized = if input.starts_with("http") { input.to_owned() } else { format!("https://{input}") };
+    let url = Url::parse(&normalized).ok()?;
+    let host = url.host_str()?.trim_start_matches("www.").to_ascii_lowercase();
+    if !matches!(host.as_str(), "youtube.com" | "m.youtube.com" | "music.youtube.com" | "youtu.be") {
+        return None;
+    }
+    url.query_pairs()
+        .find(|(k, _)| k == "list")
+        .map(|(_, v)| v.into_owned())
+        .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+}
+
 pub fn parse_input(raw: &str) -> ParsedInput {
     let input = raw.trim().trim_matches(|c| c == '<' || c == '>');
 
@@ -125,6 +140,15 @@ mod tests {
             ParsedInput::SpotifyNonTrack("album".into())
         );
         assert!(matches!(parse_input("https://spotify.link/abc"), ParsedInput::SpotifyShortLink(_)));
+    }
+
+    #[test]
+    fn playlist_ids() {
+        assert_eq!(youtube_playlist_id("https://www.youtube.com/playlist?list=PLabc_123-x").as_deref(), Some("PLabc_123-x"));
+        assert_eq!(youtube_playlist_id("https://music.youtube.com/playlist?list=OLAK5uy_x").as_deref(), Some("OLAK5uy_x"));
+        assert_eq!(youtube_playlist_id("youtube.com/watch?v=dQw4w9WgXcQ&list=PL1").as_deref(), Some("PL1"));
+        assert_eq!(youtube_playlist_id("https://youtube.com/watch?v=dQw4w9WgXcQ"), None);
+        assert_eq!(youtube_playlist_id("https://evil.com/playlist?list=PL1"), None);
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub mod ytdlp;
 use std::sync::Arc;
 
 use crate::error::{AppError, AppResult, Rejection};
+use crate::library::Library;
 use crate::model::{Track, TrackOrigin};
 use crate::persistence::settings::{SearchProvider, SettingsStore};
 use crate::util::text::clean_video_title;
@@ -19,11 +20,34 @@ pub struct Resolver {
     ytdlp: Arc<YtDlp>,
     spotify: Arc<SpotifyClient>,
     settings: Arc<SettingsStore>,
+    library: Arc<Library>,
 }
 
 impl Resolver {
-    pub fn new(ytdlp: Arc<YtDlp>, spotify: Arc<SpotifyClient>, settings: Arc<SettingsStore>) -> Self {
-        Self { ytdlp, spotify, settings }
+    pub fn new(ytdlp: Arc<YtDlp>, spotify: Arc<SpotifyClient>, settings: Arc<SettingsStore>, library: Arc<Library>) -> Self {
+        Self { ytdlp, spotify, settings, library }
+    }
+
+    /// Fills in the YouTube match of a lazily imported Spotify track.
+    pub async fn complete(&self, track: &Track) -> AppResult<Track> {
+        match &track.origin {
+            TrackOrigin::Spotify { track_id, matched_video_id: None } => {
+                let sp = SpotifyTrack {
+                    id: track_id.clone(),
+                    name: track.title.clone(),
+                    artists: if track.artist.is_empty() {
+                        Vec::new()
+                    } else {
+                        track.artist.split(", ").map(str::to_owned).collect()
+                    },
+                    album: track.album.clone(),
+                    artwork_url: track.artwork_url.clone(),
+                    duration_ms: track.duration_ms,
+                };
+                self.match_spotify(sp).await
+            }
+            _ => Ok(track.clone()),
+        }
     }
 
     pub async fn resolve(&self, raw: &str) -> AppResult<Track> {
@@ -95,6 +119,13 @@ impl Resolver {
     }
 
     async fn resolve_search(&self, query: &str) -> AppResult<Track> {
+        if self.settings.get().library.match_requests {
+            match self.library.best_match(query).await {
+                Ok(Some(hit)) => return Ok(hit.to_track()),
+                Ok(None) => {}
+                Err(err) => tracing::warn!(%err, "library lookup failed; searching online"),
+            }
+        }
         let use_spotify = self.settings.get().search_provider == SearchProvider::Spotify && self.spotify.is_connected().await;
         if use_spotify {
             match self.spotify.search(query).await {
@@ -121,7 +152,7 @@ impl Resolver {
         };
         Ok(Track {
             key: Track::spotify_key(&sp.id),
-            origin: TrackOrigin::Spotify { track_id: sp.id.clone(), matched_video_id: best.id.clone() },
+            origin: TrackOrigin::Spotify { track_id: sp.id.clone(), matched_video_id: Some(best.id.clone()) },
             title: sp.name.clone(),
             artist: sp.artist_line(),
             album: sp.album.clone(),
@@ -141,8 +172,22 @@ fn unsupported(input: &ParsedInput) -> AppError {
     AppError::Rejected(Rejection::Unsupported(msg))
 }
 
+/// A Spotify track whose YouTube match is resolved when it first plays.
+pub fn unmatched_spotify_track(sp: SpotifyTrack) -> Track {
+    Track {
+        key: Track::spotify_key(&sp.id),
+        origin: TrackOrigin::Spotify { track_id: sp.id.clone(), matched_video_id: None },
+        title: sp.name.clone(),
+        artist: sp.artist_line(),
+        album: sp.album.clone(),
+        artwork_url: sp.artwork_url.clone(),
+        duration_ms: sp.duration_ms,
+        source_url: sp.url(),
+    }
+}
+
 /// Best-effort artist/title split for a YouTube upload.
-fn split_artist_title(title: &str, channel: &str) -> (String, String) {
+pub fn split_artist_title(title: &str, channel: &str) -> (String, String) {
     let cleaned = clean_video_title(title);
     for sep in [" - ", " – ", " — ", " | "] {
         if let Some((artist, song)) = cleaned.split_once(sep) {
@@ -173,7 +218,7 @@ fn track_from_video(v: YtVideo) -> Track {
     }
 }
 
-fn track_from_search_hit(hit: &YtSearchEntry) -> Track {
+pub fn track_from_search_hit(hit: &YtSearchEntry) -> Track {
     let (artist, title) = split_artist_title(hit.title.as_deref().unwrap_or("Unknown"), hit.channel_name());
     Track {
         key: Track::youtube_key(&hit.id),

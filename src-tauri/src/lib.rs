@@ -5,12 +5,15 @@ mod chat;
 mod commands;
 mod error;
 mod events;
+mod library;
 mod model;
 mod overlay;
 mod persistence;
 mod player;
+mod playlists;
 mod resolver;
 mod state;
+mod tray;
 mod util;
 
 use tauri::{Manager, RunEvent};
@@ -27,11 +30,21 @@ pub fn run() {
         .init();
 
     let app = tauri::Builder::default()
+        // Must be the first plugin: a second launch just focuses the running app.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| tray::show_dashboard(app)))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle().clone();
             let state = tauri::async_runtime::block_on(state::AppState::initialize(&handle))?;
+            let start_in_tray = state.settings.get().start_in_tray;
+            let events = state.bus.subscribe();
             app.manage(state);
+            tray::build(&handle)?;
+            tauri::async_runtime::spawn(tray::tooltip_loop(handle.clone(), events));
+            if !start_in_tray {
+                tray::show_dashboard(&handle);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -67,15 +80,45 @@ pub fn run() {
             commands::youtube_logout,
             commands::youtube_quota,
             commands::overlay_info,
+            commands::library_status,
+            commands::library_scan,
+            commands::library_search,
+            commands::library_enqueue,
+            commands::playlists_list,
+            commands::playlist_get,
+            commands::playlist_create,
+            commands::playlist_rename,
+            commands::playlist_delete,
+            commands::playlist_add_library,
+            commands::playlist_add_link,
+            commands::playlist_add_queue,
+            commands::playlist_remove_item,
+            commands::playlist_move_item,
+            commands::playlist_enqueue,
+            commands::playlist_import_m3u,
+            commands::playlist_import_url,
+            commands::playlist_sync,
+            commands::playlist_export_m3u,
+            commands::playlist_export_youtube,
+            commands::playlist_export_spotify,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application");
 
-    app.run(|handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(|handle, event| match event {
+        // Closing the last window: keep running in the tray (the window and its
+        // webview are destroyed, freeing their memory). Tray "Quit" exits with a code.
+        RunEvent::ExitRequested { code: None, api, .. } => {
+            let keep = handle.try_state::<state::AppState>().is_some_and(|s| s.settings.get().close_to_tray);
+            if keep {
+                api.prevent_exit();
+            }
+        }
+        RunEvent::Exit => {
             if let Some(state) = handle.try_state::<state::AppState>() {
                 state.player.shutdown();
             }
         }
+        _ => {}
     });
 }

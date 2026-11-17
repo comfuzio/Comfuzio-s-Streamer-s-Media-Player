@@ -3,14 +3,18 @@ import { Icon, type IconName } from "./components/Icon";
 import { StoreProvider, useStore } from "./lib/store";
 import { BlocklistView } from "./views/BlocklistView";
 import { ChatView } from "./views/ChatView";
+import { LibraryView } from "./views/LibraryView";
 import { OverlayView } from "./views/OverlayView";
 import { PlayerView } from "./views/PlayerView";
+import { PlaylistsView } from "./views/PlaylistsView";
 import { SettingsView } from "./views/SettingsView";
 
-type ViewId = "player" | "overlay" | "chat" | "blocklist" | "settings";
+type ViewId = "player" | "library" | "playlists" | "overlay" | "chat" | "blocklist" | "settings";
 
 const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "player", label: "Player & queue", icon: "music" },
+  { id: "library", label: "Library", icon: "folder" },
+  { id: "playlists", label: "Playlists", icon: "list" },
   { id: "overlay", label: "Overlay", icon: "layers" },
   { id: "chat", label: "Chat bot", icon: "chat" },
   { id: "blocklist", label: "Blocklist", icon: "ban" },
@@ -48,7 +52,7 @@ function SidebarNowPlaying() {
       <span className={`dot dot-${player?.status ?? "stopped"}`} />
       <span className="side-np-text">
         <span className="side-np-title">{item ? item.track.title : player?.status === "idle" ? "Waiting for requests" : "Stopped"}</span>
-        <span className="muted small">{queue.items.length} in queue</span>
+        <span className="muted small">{item?.autoplay ? "Auto-DJ · " : ""}{queue.items.length} in queue</span>
       </span>
     </div>
   );
@@ -84,6 +88,8 @@ function Shell() {
         {!settings ? <p className="empty">Loading…</p> : (
           <>
             {view === "player" && <PlayerView />}
+            {view === "library" && <LibraryView />}
+            {view === "playlists" && <PlaylistsView />}
             {view === "overlay" && <OverlayView />}
             {view === "chat" && <ChatView />}
             {view === "blocklist" && <BlocklistView />}

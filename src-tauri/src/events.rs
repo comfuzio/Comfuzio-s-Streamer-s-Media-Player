@@ -37,6 +37,8 @@ pub enum AppEvent {
     Queue(QueueSnapshot),
     Settings(Box<Settings>),
     BlocklistChanged,
+    LibraryChanged,
+    PlaylistsChanged,
     SpotifyAuth { connected: bool },
     ChatStatus(ChatStatus),
     ChatAuth { platform: ChatPlatform, connected: bool },

@@ -52,6 +52,40 @@ const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL
     );
     "#,
+    // v2: local library and playlists
+    r#"
+    CREATE TABLE library_tracks (
+        id          INTEGER PRIMARY KEY,
+        path        TEXT    NOT NULL UNIQUE,
+        title       TEXT    NOT NULL,
+        artist      TEXT    NOT NULL DEFAULT '',
+        album       TEXT,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        has_art     INTEGER NOT NULL DEFAULT 0,
+        file_size   INTEGER NOT NULL,
+        modified_ms INTEGER NOT NULL,
+        search      TEXT    NOT NULL
+    );
+
+    CREATE TABLE playlists (
+        id               INTEGER PRIMARY KEY,
+        name             TEXT    NOT NULL,
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER NOT NULL,
+        source_kind      TEXT,
+        source_ref       TEXT,
+        source_synced_at INTEGER
+    );
+
+    CREATE TABLE playlist_items (
+        id          INTEGER PRIMARY KEY,
+        playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+        position    INTEGER NOT NULL,
+        track_json  TEXT    NOT NULL,
+        added_at    INTEGER NOT NULL
+    );
+    CREATE INDEX playlist_items_order ON playlist_items (playlist_id, position);
+    "#,
 ];
 
 /// Thread-safe handle to the application database. All queries run on

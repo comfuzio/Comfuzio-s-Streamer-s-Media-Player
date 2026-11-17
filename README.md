@@ -13,8 +13,9 @@ A desktop music player and chat song-request bot for live streamers. Built with 
 ```
 ├─ package.json / vite.config.ts / tsconfig.json / index.html
 ├─ scripts/fetch-sidecars.mjs     # downloads + SHA-256-verifies yt-dlp per target
-├─ src/                           # React dashboard (Phase 4 expands this)
+├─ src/                           # React dashboard
 │  ├─ App.tsx, main.tsx, styles.css
+│  ├─ views/                      # Player, Library, Playlists, Overlay, Chat bot, Blocklist, Settings
 │  └─ lib/ipc.ts, lib/types.ts    # typed IPC bindings mirroring the Rust types
 └─ src-tauri/
    ├─ Cargo.toml, build.rs        # build.rs rejects unsupported target triples
@@ -22,12 +23,16 @@ A desktop music player and chat song-request bot for live streamers. Built with 
    ├─ capabilities/default.json
    ├─ binaries/                   # yt-dlp-<target-triple>[.exe] (fetched, git-ignored)
    └─ src/
-      ├─ lib.rs, main.rs, state.rs, commands.rs, events.rs, error.rs, model.rs
+      ├─ lib.rs, main.rs, state.rs, commands.rs, events.rs, error.rs, model.rs, tray.rs
       ├─ util/        duration parsing (30s/5m/1h, clamp 30s..1h), text cleanup
       ├─ persistence/ SQLite (WAL, versioned migrations): settings, blocklist, queue, history, kv
       ├─ resolver/    input parsing, yt-dlp wrapper, Spotify PKCE client, YouTube matcher
       ├─ audio/       engine (cpal thread), decoder (Symphonia + rubato), cache, devices, OS identity
-      └─ player/      PlaybackController: queue + transport state machine
+      ├─ library/     local music: folder scan, tags + cover art (lofty), search
+      ├─ playlists/   playlists, M3U, import (YouTube/Spotify/M3U) and export
+      ├─ chat/        Twitch EventSub + YouTube Live Chat bot
+      ├─ overlay/     OBS overlay HTTP/WebSocket server
+      └─ player/      PlaybackController: queue, Auto-DJ, transport state machine
 ```
 
 ## Supported targets
@@ -51,6 +56,34 @@ cd src-tauri && cargo test
 ```
 
 See [Building & releasing](#building--releasing) for release builds.
+
+## Features
+
+### Tray mode (low memory while streaming)
+
+Closing the window keeps the app running in the system tray. Music, the chat bot and the overlay keep working, and the dashboard's webview is destroyed rather than hidden. Measured on Windows, memory drops from about 200 MB with the window open to about 9 MB in the tray. Click the tray icon or launch the app again to reopen the dashboard; a second launch never starts a second copy. The tray menu also has Play / Pause, Skip and Quit. Both behaviors can be changed in **Settings → App**, along with "start in the tray".
+
+### Local music library
+
+Add music folders in **Library** and click **Scan**. The app reads MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis and WAV files, with their tags, embedded cover art or a `cover.jpg` / `folder.jpg` next to the files. Untagged files fall back to `Artist - Title` file names. Rescans only re-read new or changed files. Local songs play straight from disk with no download, and their cover art also appears in the OBS overlay.
+
+The option **"Let chat requests play matching songs from this library first"** makes `!<ns>sr artist - song` check your library before searching online. It's off by default.
+
+### Playlists and Auto-DJ
+
+**Playlists** can mix local, YouTube and Spotify songs. You can reorder them by dragging, queue them whole or shuffled, or add the current queue to one.
+
+**Auto-DJ** plays a chosen playlist, in order or shuffled, whenever nobody has requested anything. Viewer requests always play next, and Auto-DJ picks up where it left off after them. Blocked songs are skipped, the overlay shows "from <playlist>" instead of "requested by", and Stop never turns Auto-DJ songs into requests.
+
+### Import and export
+
+| | Import (one-way copy, re-pull with **Pull**) | Export |
+|---|---|---|
+| **M3U / M3U8** | Local paths (relative or absolute) and YouTube/Spotify links | Writes `#EXTINF` + paths/links |
+| **YouTube** | Playlist links (`…list=…`), YouTube Music playlists and mixes. No account needed for public or unlisted playlists | Creates a private playlist. Needs the Google sign-in from the Chat bot tab and costs about 50 quota units per song |
+| **Spotify** | Your own or collaborative playlists. Needs a connected account; songs are matched to YouTube audio when they first play | Creates a private playlist. Needs a connected account; Spotify may refuse playlist writes for Development Mode apps |
+
+Imports are snapshots, not live sync: **Pull** replaces a playlist's songs with the current state of its source. Accounts connected before this version need to **reconnect Spotify** once so it grants the playlist permissions.
 
 ## Spotify setup
 

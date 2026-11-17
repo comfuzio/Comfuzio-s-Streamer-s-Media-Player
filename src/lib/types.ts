@@ -2,7 +2,8 @@
 
 export type TrackOrigin =
   | { kind: "youTube"; videoId: string }
-  | { kind: "spotify"; trackId: string; matchedVideoId: string };
+  | { kind: "spotify"; trackId: string; matchedVideoId: string | null }
+  | { kind: "local"; path: string; libraryId: number | null };
 
 export interface Track {
   key: string;
@@ -28,6 +29,8 @@ export interface QueueItem {
   track: Track;
   requester: Requester;
   addedAtMs: number;
+  /** Played by Auto-DJ from a playlist rather than requested. */
+  autoplay: boolean;
 }
 
 export type PlayerStatus = "stopped" | "idle" | "loading" | "playing" | "paused";
@@ -121,6 +124,70 @@ export interface Settings {
     replyInChat: boolean;
   };
   overlay: OverlaySettings;
+  closeToTray: boolean;
+  startInTray: boolean;
+  library: { folders: string[]; matchRequests: boolean };
+  autoDj: { enabled: boolean; playlistId: number | null; shuffle: boolean };
+}
+
+export interface LibraryTrack {
+  id: number;
+  path: string;
+  title: string;
+  artist: string;
+  album: string | null;
+  durationMs: number;
+  hasArt: boolean;
+}
+
+export interface LibraryStatus {
+  total: number;
+  scanning: boolean;
+}
+
+export interface ScanSummary {
+  total: number;
+  added: number;
+  updated: number;
+  removed: number;
+  failed: number;
+  missingFolders: string[];
+}
+
+export type SourceKind = "youTube" | "spotify" | "m3u";
+
+export interface Playlist {
+  id: number;
+  name: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  source: { kind: SourceKind; reference: string; syncedAtMs: number | null } | null;
+  itemCount: number;
+  totalDurationMs: number;
+}
+
+export interface PlaylistItem {
+  id: number;
+  position: number;
+  track: Track;
+  addedAtMs: number;
+}
+
+export interface PlaylistDetail {
+  playlist: Playlist;
+  items: PlaylistItem[];
+}
+
+export interface ImportOutcome {
+  playlist: Playlist;
+  imported: number;
+  skipped: string[];
+}
+
+export interface ExportOutcome {
+  url: string | null;
+  exported: number;
+  skipped: number;
 }
 
 export type OverlayTheme = "minimal" | "neon" | "glass" | "vinyl";
@@ -187,6 +254,8 @@ export type AppEvent =
   | { type: "queue"; payload: QueueSnapshot }
   | { type: "settings"; payload: Settings }
   | { type: "blocklistChanged" }
+  | { type: "libraryChanged" }
+  | { type: "playlistsChanged" }
   | { type: "spotifyAuth"; payload: { connected: boolean } }
   | { type: "chatStatus"; payload: ChatStatus }
   | { type: "chatAuth"; payload: { platform: ChatPlatform; connected: boolean } }

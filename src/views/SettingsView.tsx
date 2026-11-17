@@ -104,6 +104,26 @@ export function SettingsView() {
       </section>
 
       <section className="card">
+        <h2>App</h2>
+        <div className="form-grid">
+          <label className="check">
+            <input type="checkbox" checked={settings.closeToTray}
+              onChange={(e) => patch((s) => ({ ...s, closeToTray: e.target.checked }))} />
+            Keep running in the tray when the window is closed
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={settings.startInTray}
+              onChange={(e) => patch((s) => ({ ...s, startInTray: e.target.checked }))} />
+            Start in the tray (do not open this window on launch)
+          </label>
+        </div>
+        <p className="muted small">
+          Closing the window fully unloads the dashboard (about 170 MB) while music, chat bot and overlay keep running.
+          Reopen it from the tray icon, or by launching the app again.
+        </p>
+      </section>
+
+      <section className="card">
         <h2>Audio</h2>
         <div className="form-grid">
           <label>

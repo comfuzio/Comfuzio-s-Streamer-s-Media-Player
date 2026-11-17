@@ -24,8 +24,16 @@ const API_BASE: &str = "https://api.spotify.com/v1";
 const TOKEN_KV_KEY: &str = "spotify.tokens";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Requested up-front so Premium playback (later phase) needs no re-consent.
-const SCOPES: &str =
-    "user-read-private user-read-email streaming user-read-playback-state user-modify-playback-state";
+const SCOPES: &str = "user-read-private user-read-email streaming user-read-playback-state user-modify-playback-state \
+    playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public";
+
+/// Extracts the id from `open.spotify.com/playlist/<id>` or `spotify:playlist:<id>`.
+pub fn spotify_playlist_id(raw: &str) -> Option<String> {
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:open\.spotify\.com/(?:intl-[a-z-]+/)?playlist/|spotify:playlist:)([A-Za-z0-9]{22})").unwrap()
+    });
+    RE.captures(raw.trim()).map(|c| c[1].to_owned())
+}
 
 #[derive(Deserialize)]
 struct TokenResponse {
@@ -321,6 +329,105 @@ impl SpotifyClient {
         Ok(res.tracks.items.into_iter().next().map(Into::into))
     }
 
+    async fn api_send(&self, req: reqwest::RequestBuilder) -> AppResult<serde_json::Value> {
+        let res = req.send().await?;
+        let status = res.status();
+        let body: serde_json::Value = res.json().await.unwrap_or(serde_json::Value::Null);
+        if status.is_success() {
+            return Ok(body);
+        }
+        let msg = body["error"]["message"].as_str().unwrap_or("").to_owned();
+        let detail = if msg.is_empty() { String::new() } else { format!(": {msg}") };
+        Err(AppError::Spotify(match status {
+            reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::UNAUTHORIZED => format!(
+                "Spotify refused access ({status}{detail}). Reconnect Spotify in Settings to grant playlist permissions. \
+                 Spotify also blocks some playlist access for apps in Development Mode"
+            ),
+            reqwest::StatusCode::NOT_FOUND => "Spotify playlist not found (it must be yours or one you collaborate on)".into(),
+            _ => format!("Spotify API returned {status}{detail}"),
+        }))
+    }
+
+    async fn required_token(&self) -> AppResult<String> {
+        self.access_token()
+            .await?
+            .ok_or_else(|| AppError::Spotify("connect your Spotify account in Settings first".into()))
+    }
+
+    /// Name and tracks of a playlist (paged, 50 per request). Local files and podcast episodes are skipped.
+    pub async fn playlist(&self, playlist_id: &str) -> AppResult<(String, Vec<SpotifyTrack>)> {
+        let token = self.required_token().await?;
+        let meta = self
+            .api_send(
+                self.http
+                    .get(format!("{API_BASE}/playlists/{playlist_id}"))
+                    .query(&[("fields", "name")])
+                    .bearer_auth(&token),
+            )
+            .await?;
+        let name = meta["name"].as_str().unwrap_or("Spotify playlist").to_owned();
+        let market = self.settings.get().spotify.market;
+        let mut tracks = Vec::new();
+        let mut offset = 0usize;
+        loop {
+            let mut req = self
+                .http
+                .get(format!("{API_BASE}/playlists/{playlist_id}/items"))
+                .query(&[("limit", "50"), ("additional_types", "track")])
+                .query(&[("offset", offset)])
+                .bearer_auth(&token);
+            if let Some(m) = &market {
+                req = req.query(&[("market", m)]);
+            }
+            let page = self.api_send(req).await?;
+            let items = page["items"].as_array().cloned().unwrap_or_default();
+            for el in &items {
+                // Feb 2026 API: the content moved from `track` to `item`.
+                let item = if el["item"].is_object() { &el["item"] } else { &el["track"] };
+                if el["is_local"].as_bool() == Some(true) || item["type"].as_str() != Some("track") {
+                    continue;
+                }
+                if let Ok(t) = serde_json::from_value::<ApiTrack>(item.clone()) {
+                    tracks.push(t.into());
+                }
+            }
+            offset += items.len();
+            if items.is_empty() || page["next"].is_null() || offset >= 10_000 {
+                break;
+            }
+        }
+        Ok((name, tracks))
+    }
+
+    /// Creates a private playlist with `uris` and returns its URL.
+    pub async fn create_playlist(&self, name: &str, uris: &[String]) -> AppResult<String> {
+        let token = self.required_token().await?;
+        let created = self
+            .api_send(self.http.post(format!("{API_BASE}/me/playlists")).bearer_auth(&token).json(&serde_json::json!({
+                "name": name,
+                "public": false,
+                "description": "Exported from Comfuzio Streamer's Media Player",
+            })))
+            .await?;
+        let id = created["id"]
+            .as_str()
+            .ok_or_else(|| AppError::Spotify("playlist creation returned no id".into()))?
+            .to_owned();
+        for chunk in uris.chunks(100) {
+            self.api_send(
+                self.http
+                    .post(format!("{API_BASE}/playlists/{id}/items"))
+                    .bearer_auth(&token)
+                    .json(&serde_json::json!({ "uris": chunk })),
+            )
+            .await?;
+        }
+        Ok(created["external_urls"]["spotify"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("https://open.spotify.com/playlist/{id}")))
+    }
+
     /// Expands `spotify.link` short links to their `open.spotify.com` target.
     pub async fn expand_short_link(&self, url: &Url) -> AppResult<Url> {
         let res = self.http.get(url.clone()).send().await?;
@@ -370,5 +477,19 @@ impl SpotifyClient {
             artwork_url: OG_IMAGE.captures(&html).map(|c| decode_html_entities(&c[1])),
             duration_ms: DURATION.captures(&html).and_then(|c| c[1].parse::<u64>().ok()).unwrap_or(0) * 1000,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playlist_ids() {
+        let id = "37i9dQZF1DXcBWIGoYBM5M";
+        assert_eq!(spotify_playlist_id(&format!("https://open.spotify.com/playlist/{id}?si=x")).as_deref(), Some(id));
+        assert_eq!(spotify_playlist_id(&format!("https://open.spotify.com/intl-de/playlist/{id}")).as_deref(), Some(id));
+        assert_eq!(spotify_playlist_id(&format!("spotify:playlist:{id}")).as_deref(), Some(id));
+        assert_eq!(spotify_playlist_id("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"), None);
     }
 }

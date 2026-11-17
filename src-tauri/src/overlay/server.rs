@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{broadcast, oneshot};
 
 use crate::events::{AppEvent, EventBus, NoticeLevel};
+use crate::library::Library;
 use crate::model::{PlayerSnapshot, QueueItem};
 use crate::persistence::settings::{OverlaySettings, SettingsStore};
 use crate::player::PlaybackController;
@@ -55,6 +56,7 @@ struct Ctx {
     player: Arc<PlaybackController>,
     settings: Arc<SettingsStore>,
     bus: EventBus,
+    library: Arc<Library>,
 }
 
 struct Running {
@@ -68,8 +70,11 @@ pub struct OverlayServer {
 }
 
 impl OverlayServer {
-    pub fn start(player: Arc<PlaybackController>, settings: Arc<SettingsStore>, bus: EventBus) -> Arc<Self> {
-        let server = Arc::new(Self { ctx: Ctx { player, settings: settings.clone(), bus: bus.clone() }, running: Mutex::new(None) });
+    pub fn start(player: Arc<PlaybackController>, settings: Arc<SettingsStore>, bus: EventBus, library: Arc<Library>) -> Arc<Self> {
+        let server = Arc::new(Self {
+            ctx: Ctx { player, settings: settings.clone(), bus: bus.clone(), library },
+            running: Mutex::new(None),
+        });
         let port = settings.get().overlay_port;
         let s = server.clone();
         tauri::async_runtime::spawn(async move {
@@ -137,6 +142,7 @@ fn router(ctx: Ctx, port: u16) -> Router {
         .route("/overlay/overlay.js", get(|| async { asset(OVERLAY_JS, "text/javascript; charset=utf-8") }))
         .route("/overlay/ws", get(ws_upgrade))
         .route("/api/now-playing", get(now_playing))
+        .route("/art/local/{id}", get(local_art))
         .layer(middleware::from_fn(move |req: Request, next: Next| guard(req, next, port)))
         .with_state(ctx)
 }
@@ -186,6 +192,26 @@ async fn guard(req: Request, next: Next, port: u16) -> Response {
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
     }
     next.run(req).await
+}
+
+/// Cover art of a library track (embedded picture or cover.jpg next to it).
+async fn local_art(State(ctx): State<Ctx>, Path(id): Path<i64>) -> Response {
+    match ctx.library.artwork(id).await {
+        Ok(Some((bytes, mime))) => (
+            [
+                (header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("image/jpeg"))),
+                (header::CACHE_CONTROL, HeaderValue::from_static("max-age=3600")),
+                (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::warn!(%err, id, "artwork lookup failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 async fn now_playing(State(ctx): State<Ctx>) -> Json<PlayerSnapshot> {

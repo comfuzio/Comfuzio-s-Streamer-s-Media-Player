@@ -222,6 +222,30 @@ impl OverlaySettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LibrarySettings {
+    /// Folders scanned (recursively) for local music.
+    pub folders: Vec<String>,
+    /// Let text requests (`!sr artist - song`) match the local library before searching online.
+    pub match_requests: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AutoDjSettings {
+    /// Play `playlist_id` whenever the request queue is empty.
+    pub enabled: bool,
+    pub playlist_id: Option<i64>,
+    pub shuffle: bool,
+}
+
+impl Default for AutoDjSettings {
+    fn default() -> Self {
+        Self { enabled: false, playlist_id: None, shuffle: true }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -245,6 +269,12 @@ pub struct Settings {
     pub twitch: TwitchSettings,
     pub youtube_chat: YouTubeChatSettings,
     pub overlay: OverlaySettings,
+    /// Closing the window keeps the app running in the tray (and frees the dashboard's memory).
+    pub close_to_tray: bool,
+    /// Launch straight into the tray without opening the dashboard.
+    pub start_in_tray: bool,
+    pub library: LibrarySettings,
+    pub auto_dj: AutoDjSettings,
 }
 
 impl Default for Settings {
@@ -265,6 +295,10 @@ impl Default for Settings {
             twitch: TwitchSettings::default(),
             youtube_chat: YouTubeChatSettings::default(),
             overlay: OverlaySettings::default(),
+            close_to_tray: true,
+            start_in_tray: false,
+            library: LibrarySettings::default(),
+            auto_dj: AutoDjSettings::default(),
         }
     }
 }
@@ -318,6 +352,17 @@ impl Settings {
         self.youtube_chat.offline_check_secs = self.youtube_chat.offline_check_secs.clamp(30, 1800);
         self.youtube_chat.daily_quota = self.youtube_chat.daily_quota.max(100);
         self.overlay = self.overlay.validated()?;
+        let mut folders: Vec<String> = Vec::new();
+        for f in self.library.folders.drain(..) {
+            let f = f.trim().to_owned();
+            if !f.is_empty() && !folders.contains(&f) {
+                folders.push(f);
+            }
+        }
+        self.library.folders = folders;
+        if self.auto_dj.playlist_id.is_none() {
+            self.auto_dj.enabled = false;
+        }
         if let Some(m) = &mut self.spotify.market {
             m.make_ascii_uppercase();
             if m.len() != 2 || !m.chars().all(|c| c.is_ascii_alphabetic()) {
