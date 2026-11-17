@@ -37,7 +37,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential file libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev libasound2-dev patchelf xdg-utils
+          sudo apt-get install -y build-essential file libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev librsvg2-dev libasound2-dev patchelf xdg-utils
 
       - run: npm ci
       # tauri-build verifies that externalBin files exist, even for `cargo check`.

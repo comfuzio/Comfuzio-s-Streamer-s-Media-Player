@@ -47,7 +47,7 @@ Any other target triple fails in `build.rs`.
 
 ## Development
 
-Prerequisites: Rust stable, Node 22+, and the platform's Tauri prerequisites. On Linux these include `libwebkit2gtk-4.1-dev` and `libasound2-dev`.
+Prerequisites: Rust stable, Node 22+, and the platform's Tauri prerequisites. On Linux these include `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev` (tray icon) and `libasound2-dev`.
 
 ```bash
 npm install
