@@ -126,6 +126,7 @@ export interface Settings {
   overlay: OverlaySettings;
   closeToTray: boolean;
   startInTray: boolean;
+  autoCheckUpdates: boolean;
   library: { folders: string[]; matchRequests: boolean };
   autoDj: { enabled: boolean; playlistId: number | null; shuffle: boolean };
 }

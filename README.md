@@ -85,6 +85,14 @@ The option **"Let chat requests play matching songs from this library first"** m
 
 Imports are snapshots, not live sync: **Pull** replaces a playlist's songs with the current state of its source. Accounts connected before this version need to **reconnect Spotify** once so it grants the playlist permissions.
 
+### About and updates
+
+**About** in the sidebar shows the version and links to the GitHub page, releases and issue tracker. It can check for updates, and does so automatically at startup unless you turn that off. When a newer release exists, it downloads the update for your platform, verifies it against the app's signing public key in `tauri.conf.json`, installs it and restarts.
+
+The x86-64-v3 AppImage updates to the baseline x64 AppImage, which runs on every CPU. Download the v3 build again by hand if you want to stay on it.
+
+Release builds are signed by the release workflow with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets. The private key lives outside the repo (`%USERPROFILE%\.tauri\comfuzio-player-updater.key`). **Back it up: if it's lost, installed copies can no longer auto-update.** Local release builds need the same two environment variables set.
+
 ## Spotify setup
 
 1. Create an app at <https://developer.spotify.com/dashboard>.

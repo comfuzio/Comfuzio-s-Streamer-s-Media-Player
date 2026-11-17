@@ -46,6 +46,18 @@
     ],
     "copyright": "Copyright (c) 2026 Comfuzio. All rights reserved.",
     "publisher": "Comfuzio",
-    "licenseFile": "../LICENSE"
+    "licenseFile": "../LICENSE",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE2RTgyMjQwQzk5OEE0OEYKUldTUHBKakpRQ0xvcHVoZHMxNWYzUHA1b01DUzZSL3BRcEphclNpTnM2MVVzcUhaVzlyYmZORmUK",
+      "endpoints": [
+        "https://github.com/comfuzio/Comfuzio-s-Streamer-s-Media-Player/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -125,6 +125,9 @@ jobs:
           # apply to the app only, not to build scripts that run on the host.
           RUSTFLAGS: ${{ matrix.rustflags }}
           CFLAGS_x86_64_unknown_linux_gnu: ${{ matrix.cflags }}
+          # Signs the updater artifacts (.sig) that the in-app updater verifies.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v__VERSION__-build.{0}', github.run_number) }}
           releaseName: Comfuzio Streamer's Media Player v__VERSION__
@@ -139,6 +142,9 @@ jobs:
           releaseDraft: true
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           releaseAssetNamePattern: ${{ matrix.asset_pattern }}
+          # latest.json has one "linux-x86_64" slot; it must point at the baseline
+          # build, or older CPUs would auto-update into an AVX2 binary and crash.
+          uploadUpdaterJson: ${{ matrix.variant != 'x86-64-v3' }}
           args: --target ${{ matrix.target }}
 
       # Fails the job (the release stays a draft) if the v3 flags didn't take effect.
