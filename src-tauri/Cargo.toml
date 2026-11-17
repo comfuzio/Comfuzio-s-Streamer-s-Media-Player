@@ -1,6 +1,6 @@
 [package]
 name = "comfuzio-player"
-version = "0.2.1"
+version = "0.2.2"
 description = "Comfuzio Streamer's Media Player"
 authors = ["Comfuzio"]
 license-file = "../LICENSE"
